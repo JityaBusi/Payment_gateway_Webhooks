@@ -1,231 +1,229 @@
-# Async Payment Gateway
+Async Payment Gateway
 
-A production-ready, asynchronous payment gateway enabling merchants to accept payments via an embeddable SDK. This system implements event-driven architecture using Redis job queues, resilient background workers, and secure HMAC-signed webhooks with exponential backoff retries.
+A production-ready, asynchronous payment gateway that allows merchants to accept payments using an embeddable checkout SDK.
 
----
+The system is built around an event-driven architecture to handle high traffic reliably. Payments are processed asynchronously using Redis-backed job queues, resilient background workers, and secure HMAC-signed webhooks with automatic retries and exponential backoff.
 
-## 🏗 Architecture
+🏗 Architecture Overview
 
-The system follows an asynchronous, event-driven flow to handle high throughput and reliability.
+The gateway follows an asynchronous, non-blocking flow to ensure scalability and fault tolerance.
+Client requests return immediately, while payment processing and webhook delivery happen in the background.
 
-```mermaid
+High-Level Flow
+
+The client (via SDK or API) creates a payment.
+
+The API stores the payment in a pending state.
+
+A background worker processes the payment asynchronously.
+
+On completion, a webhook is delivered to the merchant.
+
+Failed webhooks are retried automatically using exponential backoff.
+
 sequenceDiagram
-    participant User as User/SDK
+    participant User as User / SDK
     participant API as Gateway API
     participant DB as PostgreSQL
     participant Redis as Redis Queue
     participant Worker as Worker Service
     participant Merchant as Merchant Webhook
 
-    %% Payment Flow
-    User->>API: POST /payments (Create)
-    API->>DB: Save Payment (Status: pending)
+    User->>API: POST /payments
+    API->>DB: Save payment (pending)
     API->>Redis: Enqueue ProcessPaymentJob
-    API-->>User: Return 201 Created (Pending)
-    
-    %% Async Processing
-    Redis->>Worker: Pop ProcessPaymentJob
-    Worker->>Worker: Simulate Processing (5-10s)
-    alt Payment Success
-        Worker->>DB: Update Status: success
+    API-->>User: 201 Created (pending)
+
+    Redis->>Worker: ProcessPaymentJob
+    Worker->>Worker: Simulate processing (5–10s)
+
+    alt Payment success
+        Worker->>DB: Update status = success
         Worker->>Redis: Enqueue DeliverWebhookJob
-    else Payment Failed
-        Worker->>DB: Update Status: failed
+    else Payment failed
+        Worker->>DB: Update status = failed
     end
 
-    %% Webhook Delivery
-    Redis->>Worker: Pop DeliverWebhookJob
-    Worker->>Worker: Generate HMAC Signature
+    Redis->>Worker: DeliverWebhookJob
+    Worker->>Worker: Generate HMAC signature
     Worker->>Merchant: POST /webhook
-    
-    alt Webhook Success
-        Worker->>DB: Log Success
-    else Webhook Failed
-        Worker->>DB: Log Retry (Exponential Backoff)
-        Worker->>Redis: Re-queue Job (Delayed)
+
+    alt Webhook success
+        Worker->>DB: Log success
+    else Webhook failed
+        Worker->>DB: Log retry
+        Worker->>Redis: Re-queue with delay
     end
 
-```
+🚀 Setup & Running the Project
+Prerequisites
 
----
+Docker
 
-## 🚀 Setup & Running
+Docker Compose
 
-### Prerequisites
+Start All Services
 
-* Docker & Docker Compose
+Build and start the API, worker, Redis, Postgres, dashboard, and SDK:
 
-### Start the Application
-
-Run the following command to build and start all services (API, Worker, Redis, Postgres, Dashboard):
-
-```bash
 docker-compose up -d --build
 
-```
+Running Services
+Service	URL / Port	Purpose
+API	http://localhost:8000
+	Core payment gateway API
+Dashboard	http://localhost:3000
+	Webhook configuration & logs
+Checkout SDK	http://localhost:3001
+	Embeddable checkout widget
+Redis	6379	Background job queue
+Postgres	5432	Persistent data storage
+🔌 API Reference
+1. Create Payment
 
-### Services Overview
+Creates a new payment request.
+The API responds immediately with status pending.
 
-| Service | URL / Port | Description |
-| --- | --- | --- |
-| **API** | `http://localhost:8000` | Core Payment API |
-| **Dashboard** | `http://localhost:3000` | Webhook logs & Config |
-| **Checkout SDK** | `http://localhost:3001` | Embeddable Widget |
-| **Redis** | `Port 6379` | Job Queue |
-| **Postgres** | `Port 5432` | Database |
+POST /api/v1/payments
 
----
-
-## 🔌 API Documentation
-
-### 1. Create Payment
-
-Initiates a payment. Returns `201 Created` immediately with status `pending`.
-**POST** `/api/v1/payments`
-
-```bash
 curl -X POST http://localhost:8000/api/v1/payments \
   -H "X-Api-Key: key_test_abc123" \
   -H "X-Api-Secret: secret_test_xyz789" \
   -H "Content-Type: application/json" \
   -d '{
-    "amount": 50000, 
-    "currency": "INR", 
-    "method": "upi", 
+    "amount": 50000,
+    "currency": "INR",
+    "method": "upi",
     "order_id": "ord_test_001",
     "vpa": "test@upi"
   }'
 
-```
+2. Capture Payment
 
-### 2. Capture Payment
+Captures a successfully authorized payment.
 
-Captures a successful payment.
-**POST** `/api/v1/payments/{id}/capture`
+POST /api/v1/payments/{id}/capture
 
-```bash
 curl -X POST http://localhost:8000/api/v1/payments/{payment_id}/capture \
   -H "X-Api-Key: key_test_abc123" \
   -H "X-Api-Secret: secret_test_xyz789"
 
-```
+3. Refund Payment
 
-### 3. Refund Payment
+Initiates a refund for a completed payment.
 
-Initiates a refund for a successful payment.
-**POST** `/api/v1/payments/{id}/refunds`
+POST /api/v1/payments/{id}/refunds
 
-```bash
 curl -X POST http://localhost:8000/api/v1/payments/{payment_id}/refunds \
   -H "X-Api-Key: key_test_abc123" \
   -H "X-Api-Secret: secret_test_xyz789" \
   -H "Content-Type: application/json" \
   -d '{ "amount": 1000, "reason": "Customer requested" }'
 
-```
+4. Background Job Status (Testing)
 
-### 4. Job Queue Status (Test Endpoint)
+Returns the current state of background jobs.
 
-View the status of background jobs.
-**GET** `/api/v1/test/jobs/status`
+GET /api/v1/test/jobs/status
 
----
+🔧 Environment Configuration
 
-## 🔧 Environment Configuration
+Environment variables are managed via docker-compose.yml.
 
-The system uses the following environment variables (configured in `docker-compose.yml`):
+Variable	Description	Default
+DATABASE_URL	PostgreSQL connection string	jdbc:postgresql://postgres:5432/payment_gateway
+REDIS_URL	Redis connection URL	redis://redis:6379
+WEBHOOK_RETRY_INTERVALS_TEST	Use fast retry intervals for testing	false
+SPRING_PROFILES_ACTIVE	Active service profile (default / worker)	default
+📦 Checkout SDK Integration
 
-| Variable | Description | Default |
-| --- | --- | --- |
-| `DATABASE_URL` | JDBC connection string | `jdbc:postgresql://postgres:5432/payment_gateway` |
-| `REDIS_URL` | Redis connection string | `redis://redis:6379` |
-| `WEBHOOK_RETRY_INTERVALS_TEST` | Enable fast retries for testing | `false` |
-| `SPRING_PROFILES_ACTIVE` | Active profile (`default` or `worker`) | `default` |
+Use the SDK to embed payments directly into your website.
 
----
-
-## 📦 SDK Integration Guide
-
-To integrate the payment gateway on a merchant website:
-
-**1. Include the Script:**
-
-```html
+1. Include the Script
 <script src="http://localhost:3001/checkout.js"></script>
 
-```
-
-**2. Initialize & Open:**
-
-```javascript
+2. Initialize and Open Checkout
 const gateway = new window.PaymentGateway({
   key: 'key_test_abc123',
   orderId: 'ORDER_123',
-  onSuccess: (data) => console.log("Payment Success:", data),
-  onFailure: (error) => console.error("Payment Failed:", error)
+  onSuccess: (data) => console.log('Payment Success:', data),
+  onFailure: (error) => console.error('Payment Failed:', error)
 });
 
-// Open the modal
 gateway.open();
 
-```
+🔒 Webhook Integration
+1. Configure Webhook URL
 
----
+Visit the dashboard to configure your webhook endpoint and view your signing secret:
 
-## 🔒 Webhook Integration Guide
+http://localhost:3000/webhooks.html
 
-### 1. Configure Webhook URL
+2. Verify Webhook Signatures
 
-Go to the Dashboard at `http://localhost:3000/webhooks.html` to set your webhook URL and view your secret.
+Each webhook includes an X-Webhook-Signature header generated using HMAC-SHA256.
 
-### 2. Verify Signatures
+Node.js Example:
 
-The system sends an `X-Webhook-Signature` header with every request. You must verify this using HMAC-SHA256.
-
-**Node.js Example:**
-
-```javascript
 const crypto = require('crypto');
 
 function verifyWebhook(req, secret) {
-    const signature = req.headers['x-webhook-signature'];
-    const payload = JSON.stringify(req.body); // Must be raw JSON body
-    
-    const expected = crypto
-        .createHmac('sha256', secret)
-        .update(payload)
-        .digest('hex');
+  const signature = req.headers['x-webhook-signature'];
+  const payload = JSON.stringify(req.body); // must be raw JSON
 
-    return signature === expected;
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+
+  return signature === expected;
 }
 
-```
+3. Webhook Retry Policy
 
-### 3. Retry Logic
+If the webhook endpoint responds with a non-200 status, delivery is retried automatically:
 
-If your server returns a non-200 response, the gateway will retry delivery 5 times using this schedule:
+Immediate
 
-1. **Attempt 1:** Immediate
-2. **Attempt 2:** 1 Minute
-3. **Attempt 3:** 5 Minutes
-4. **Attempt 4:** 30 Minutes
-5. **Attempt 5:** 2 Hours
+After 1 minute
 
-*Note: Enable `WEBHOOK_RETRY_INTERVALS_TEST=true` in docker-compose to use 5-second intervals for testing.*
+After 5 minutes
 
----
+After 30 minutes
 
-## 🧪 Testing Instructions
+After 2 hours
 
-1. **Start Services:** Ensure `docker-compose up` is running.
-2. **Frontend Test:** * Visit `http://localhost:3001/checkout.html?order_id=TEST_1&key=key_test_abc123`.
-* Click "Pay Now".
-* Watch the spinner and success message.
+Testing Tip:
+Set WEBHOOK_RETRY_INTERVALS_TEST=true to use 5-second retry intervals.
+
+🧪 Testing the System
+
+Start all services
+
+docker-compose up
 
 
-3. **Backend Verification:**
-* Check worker logs: `docker logs -f gateway_worker`.
-* Check dashboard logs: `http://localhost:3000/webhooks.html`.
+Test the checkout flow
 
-"# payment-gateway" 
-"# Production-Ready-Payment-Gateway" 
+Open
+http://localhost:3001/checkout.html?order_id=TEST_1&key=key_test_abc123
+
+Click Pay Now
+
+Observe the loading and success state
+
+Verify backend activity
+
+Worker logs:
+
+docker logs -f gateway_worker
+
+
+Webhook logs:
+http://localhost:3000/webhooks.html
+
+📌 Project Tags
+#payment-gateway
+#async-architecture
+#event-driven
+#production-ready
